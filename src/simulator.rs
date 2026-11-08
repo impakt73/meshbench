@@ -19,7 +19,11 @@ pub fn simulate_standard(
         let descriptor_base = allocator.alloc(standard.meshlets.len() * descriptor_size as usize);
         let indirection_base = allocator.alloc(standard.vertices.len() * size_of::<u32>());
         let triangle_base = allocator.alloc(standard.triangles.len());
-        let vertex_base = allocator.alloc(primitive.vertex_count * primitive.stride);
+        let stream_bases = primitive
+            .streams
+            .iter()
+            .map(|stream| allocator.alloc(primitive.vertex_count * stream.element_size()))
+            .collect::<Vec<_>>();
 
         for (index, meshlet) in standard.meshlets.iter().enumerate() {
             memory.load(
@@ -36,13 +40,22 @@ pub fn simulate_standard(
                 LoadCategory::VertexIndirection,
             );
 
-            for local_vertex in 0..vertex_count {
-                let global_vertex = standard.vertices[vertex_offset + local_vertex] as u64;
-                memory.load(
-                    vertex_base + global_vertex * primitive.stride as u64,
-                    primitive.stride as u64,
-                    LoadCategory::VertexData,
-                );
+            for (stream_index, stream) in primitive.streams.iter().enumerate() {
+                let element_size = stream.element_size() as u64;
+                let category = if stream_index == 0 {
+                    LoadCategory::PositionData
+                } else {
+                    LoadCategory::AttributeData
+                };
+
+                for local_vertex in 0..vertex_count {
+                    let global_vertex = standard.vertices[vertex_offset + local_vertex] as u64;
+                    memory.load(
+                        stream_bases[stream_index] + global_vertex * element_size,
+                        element_size,
+                        category,
+                    );
+                }
             }
 
             memory.load(
@@ -67,11 +80,17 @@ pub fn simulate_localized(
 
     for (primitive, cluster) in primitives.iter().zip(clusters) {
         let localized = &cluster.localized;
-        let descriptor_base = allocator.alloc(localized.meshlets.len() * descriptor_size as usize);
-        let vertex_base = allocator.alloc(localized.vertices.len());
-        let triangle_base = allocator.alloc(localized.triangles.len());
+        let descriptor_base = allocator.alloc(localized.len() * descriptor_size as usize);
+        let position_base = allocator.alloc(localized.positions.vertices.len());
+        let attribute_bases = localized
+            .attributes
+            .iter()
+            .map(|stream| allocator.alloc(stream.data.len()))
+            .collect::<Vec<_>>();
+        let triangle_base = allocator.alloc(localized.positions.triangles.len());
+        let position_size = primitive.position().element_size() as u64;
 
-        for (index, meshlet) in localized.meshlets.iter().enumerate() {
+        for (index, meshlet) in localized.positions.meshlets.iter().enumerate() {
             memory.load(
                 descriptor_base + index as u64 * descriptor_size,
                 descriptor_size,
@@ -79,10 +98,19 @@ pub fn simulate_localized(
             );
 
             memory.load(
-                vertex_base + meshlet.vertex_offset as u64 * primitive.stride as u64,
-                meshlet.vertex_count as u64 * primitive.stride as u64,
-                LoadCategory::VertexData,
+                position_base + meshlet.vertex_offset as u64 * position_size,
+                meshlet.vertex_count as u64 * position_size,
+                LoadCategory::PositionData,
             );
+
+            for (stream_index, stream) in localized.attributes.iter().enumerate() {
+                let element_size = stream.element_size() as u64;
+                memory.load(
+                    attribute_bases[stream_index] + meshlet.vertex_offset as u64 * element_size,
+                    meshlet.vertex_count as u64 * element_size,
+                    LoadCategory::AttributeData,
+                );
+            }
 
             memory.load(
                 triangle_base + meshlet.triangle_offset as u64,

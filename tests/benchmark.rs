@@ -43,4 +43,18 @@ fn benchmark_box_gltf() {
             .dram_bytes,
         0
     );
+
+    assert!(report.standard.memory.breakdown.position_data.dram_bytes > 0);
+    assert!(report.standard.memory.breakdown.attribute_data.dram_bytes > 0);
+    assert!(report.localized.memory.breakdown.position_data.dram_bytes > 0);
+    assert!(report.localized.memory.breakdown.attribute_data.dram_bytes > 0);
+
+    assert_eq!(
+        report.standard.storage.position_bytes + report.standard.storage.attribute_bytes,
+        report.standard.storage.vertex_data_bytes
+    );
+    assert_eq!(
+        report.localized.storage.position_bytes + report.localized.storage.attribute_bytes,
+        report.localized.storage.vertex_data_bytes
+    );
 }

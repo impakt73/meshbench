@@ -45,9 +45,13 @@ pub fn run(input: &Path, options: &BenchmarkOptions) -> Result<BenchmarkReport> 
             name: prepared.name.clone(),
             vertex_count: prepared.vertex_count as u64,
             triangle_count: prepared.triangle_count() as u64,
-            vertex_stride: prepared.stride,
+            vertex_bytes: prepared
+                .streams
+                .iter()
+                .map(|stream| stream.element_size())
+                .sum(),
             cluster_count: cluster.standard.len() as u64,
-            attributes: prepared.attributes.clone(),
+            attributes: prepared.attribute_info(),
             standard_storage: standard.clone(),
             localized_storage: localized.clone(),
         });
@@ -119,13 +123,22 @@ pub fn run(input: &Path, options: &BenchmarkOptions) -> Result<BenchmarkReport> 
 fn storage_standard(primitive: &PreparedPrimitive, cluster: &PrimitiveClusters) -> StorageMetrics {
     let descriptor_size = size_of::<meshopt::ffi::meshopt_Meshlet>() as u64;
     let cluster_count = cluster.standard.len() as u64;
+    let position_bytes = primitive.vertex_count as u64 * primitive.position().element_size() as u64;
+    let attribute_bytes = primitive
+        .streams
+        .iter()
+        .skip(1)
+        .map(|stream| primitive.vertex_count as u64 * stream.element_size() as u64)
+        .sum::<u64>();
     let mut storage = StorageMetrics {
         cluster_count,
         vertex_count: primitive.vertex_count as u64,
         triangle_count: primitive.triangle_count() as u64,
         descriptor_bytes: cluster_count * descriptor_size,
         vertex_indirection_bytes: cluster.standard.vertices.len() as u64 * size_of::<u32>() as u64,
-        vertex_data_bytes: primitive.vertex_count as u64 * primitive.stride as u64,
+        position_bytes,
+        attribute_bytes,
+        vertex_data_bytes: position_bytes + attribute_bytes,
         triangle_index_bytes: cluster.standard.triangles.len() as u64,
         ..StorageMetrics::default()
     };
@@ -136,17 +149,31 @@ fn storage_standard(primitive: &PreparedPrimitive, cluster: &PrimitiveClusters) 
 fn storage_localized(primitive: &PreparedPrimitive, cluster: &PrimitiveClusters) -> StorageMetrics {
     let descriptor_size = size_of::<meshopt::ffi::meshopt_Meshlet>() as u64;
     let cluster_count = cluster.localized.len() as u64;
-    let referenced_vertex_bytes = cluster.referenced_vertex_count as u64 * primitive.stride as u64;
+    let position_bytes = cluster.localized.positions.vertices.len() as u64;
+    let attribute_bytes = cluster
+        .localized
+        .attributes
+        .iter()
+        .map(|stream| stream.data.len() as u64)
+        .sum::<u64>();
+    let vertex_data_bytes = position_bytes + attribute_bytes;
+    let element_size = primitive
+        .streams
+        .iter()
+        .map(|stream| stream.element_size() as u64)
+        .sum::<u64>();
+    let referenced_vertex_bytes = cluster.referenced_vertex_count as u64 * element_size;
     let mut storage = StorageMetrics {
         cluster_count,
         vertex_count: primitive.vertex_count as u64,
         triangle_count: primitive.triangle_count() as u64,
         descriptor_bytes: cluster_count * descriptor_size,
         vertex_indirection_bytes: 0,
-        vertex_data_bytes: cluster.localized.vertices.len() as u64,
-        triangle_index_bytes: cluster.localized.triangles.len() as u64,
-        duplicate_vertex_bytes: (cluster.localized.vertices.len() as u64)
-            .saturating_sub(referenced_vertex_bytes),
+        position_bytes,
+        attribute_bytes,
+        vertex_data_bytes,
+        triangle_index_bytes: cluster.localized.positions.triangles.len() as u64,
+        duplicate_vertex_bytes: vertex_data_bytes.saturating_sub(referenced_vertex_bytes),
         ..StorageMetrics::default()
     };
     storage.finalize();

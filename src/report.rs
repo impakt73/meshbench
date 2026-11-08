@@ -7,7 +7,8 @@ use serde::Serialize;
 pub enum LoadCategory {
     Descriptor,
     VertexIndirection,
-    VertexData,
+    PositionData,
+    AttributeData,
     TriangleIndex,
 }
 
@@ -23,7 +24,8 @@ pub struct LoadCategoryMetrics {
 pub struct LoadBreakdown {
     pub descriptors: LoadCategoryMetrics,
     pub vertex_indirection: LoadCategoryMetrics,
-    pub vertex_data: LoadCategoryMetrics,
+    pub position_data: LoadCategoryMetrics,
+    pub attribute_data: LoadCategoryMetrics,
     pub triangle_indices: LoadCategoryMetrics,
 }
 
@@ -32,7 +34,8 @@ impl LoadBreakdown {
         match category {
             LoadCategory::Descriptor => &mut self.descriptors,
             LoadCategory::VertexIndirection => &mut self.vertex_indirection,
-            LoadCategory::VertexData => &mut self.vertex_data,
+            LoadCategory::PositionData => &mut self.position_data,
+            LoadCategory::AttributeData => &mut self.attribute_data,
             LoadCategory::TriangleIndex => &mut self.triangle_indices,
         }
     }
@@ -85,6 +88,8 @@ pub struct StorageMetrics {
     pub triangle_count: u64,
     pub descriptor_bytes: u64,
     pub vertex_indirection_bytes: u64,
+    pub position_bytes: u64,
+    pub attribute_bytes: u64,
     pub vertex_data_bytes: u64,
     pub triangle_index_bytes: u64,
     pub total_bytes: u64,
@@ -107,6 +112,8 @@ impl StorageMetrics {
         self.triangle_count += other.triangle_count;
         self.descriptor_bytes += other.descriptor_bytes;
         self.vertex_indirection_bytes += other.vertex_indirection_bytes;
+        self.position_bytes += other.position_bytes;
+        self.attribute_bytes += other.attribute_bytes;
         self.vertex_data_bytes += other.vertex_data_bytes;
         self.triangle_index_bytes += other.triangle_index_bytes;
         self.total_bytes += other.total_bytes;
@@ -126,7 +133,7 @@ pub struct PrimitiveReport {
     pub name: String,
     pub vertex_count: u64,
     pub triangle_count: u64,
-    pub vertex_stride: usize,
+    pub vertex_bytes: usize,
     pub cluster_count: u64,
     pub attributes: Vec<VertexAttribute>,
     pub standard_storage: StorageMetrics,
@@ -220,8 +227,8 @@ impl BenchmarkReport {
 
         println!();
         println!(
-            "{:<10} {:>12} {:>12} {:>12} {:>12}",
-            "path", "descriptors", "indirection", "vertices", "triangles"
+            "{:<10} {:>12} {:>12} {:>12} {:>12} {:>12}",
+            "path", "descriptors", "indirection", "positions", "attributes", "triangles"
         );
         self.print_breakdown_row(&self.standard);
         self.print_breakdown_row(&self.localized);
@@ -229,22 +236,22 @@ impl BenchmarkReport {
         if per_primitive {
             println!();
             println!(
-                "{:<32} {:>10} {:>10} {:>8} {:>9} {:>12} {:>12}",
+                "{:<32} {:>10} {:>10} {:>9} {:>9} {:>12} {:>12}",
                 "primitive",
                 "vertices",
                 "triangles",
-                "stride",
+                "vertex B",
                 "clusters",
                 "standard B",
                 "localized B"
             );
             for primitive in &self.primitives {
                 println!(
-                    "{:<32} {:>10} {:>10} {:>8} {:>9} {:>12} {:>12}",
+                    "{:<32} {:>10} {:>10} {:>9} {:>9} {:>12} {:>12}",
                     primitive.name,
                     primitive.vertex_count,
                     primitive.triangle_count,
-                    primitive.vertex_stride,
+                    primitive.vertex_bytes,
                     primitive.cluster_count,
                     primitive.standard_storage.total_bytes,
                     primitive.localized_storage.total_bytes
@@ -254,8 +261,8 @@ impl BenchmarkReport {
                     .iter()
                     .map(|attribute| {
                         format!(
-                            "{}@{}({})",
-                            attribute.name, attribute.offset, attribute.components
+                            "{}:{}({}B)",
+                            attribute.name, attribute.components, attribute.element_size
                         )
                     })
                     .collect::<Vec<_>>()
@@ -290,11 +297,12 @@ impl BenchmarkReport {
     fn print_breakdown_row(&self, path: &PathReport) {
         let breakdown = &path.memory.breakdown;
         println!(
-            "{:<10} {:>12} {:>12} {:>12} {:>12}",
+            "{:<10} {:>12} {:>12} {:>12} {:>12} {:>12}",
             path.path,
             breakdown.descriptors.dram_bytes,
             breakdown.vertex_indirection.dram_bytes,
-            breakdown.vertex_data.dram_bytes,
+            breakdown.position_data.dram_bytes,
+            breakdown.attribute_data.dram_bytes,
             breakdown.triangle_indices.dram_bytes
         );
     }

@@ -1,4 +1,4 @@
-use crate::geometry::{PackedPrimitive, VertexAttribute};
+use crate::geometry::{AttributeStream, PackedPrimitive};
 use anyhow::{Context, Result, anyhow, bail};
 use gltf::mesh::Mode;
 use std::mem::size_of;
@@ -130,93 +130,105 @@ fn pack_primitive(
         }
     }
 
-    let mut attributes = Vec::new();
-    let mut stride = 0usize;
+    if let Some(normals) = &normals {
+        if normals.len() != vertex_count {
+            bail!(
+                "NORMAL count {} does not match POSITION count {vertex_count}",
+                normals.len()
+            );
+        }
+    }
+    if let Some(tex_coords) = &tex_coords {
+        if tex_coords.len() != vertex_count {
+            bail!(
+                "TEXCOORD_0 count {} does not match POSITION count {vertex_count}",
+                tex_coords.len()
+            );
+        }
+    }
+    if let Some(tangents) = &tangents {
+        if tangents.len() != vertex_count {
+            bail!(
+                "TANGENT count {} does not match POSITION count {vertex_count}",
+                tangents.len()
+            );
+        }
+    }
+    if let Some(colors) = &colors {
+        if colors.len() != vertex_count {
+            bail!(
+                "COLOR_0 count {} does not match POSITION count {vertex_count}",
+                colors.len()
+            );
+        }
+    }
 
-    attributes.push(VertexAttribute {
+    let transformed_positions = positions
+        .iter()
+        .map(|position| transform_position(world, *position))
+        .collect::<Vec<_>>();
+    let mut streams = vec![AttributeStream {
         name: "POSITION".to_string(),
         components: 3,
-        offset: stride,
-    });
-    stride += 3 * size_of::<f32>();
+        data: pack_f32_stream(&transformed_positions),
+    }];
 
-    let normal_offset = normals.as_ref().map(|_| {
-        let offset = stride;
-        attributes.push(VertexAttribute {
+    if let Some(normals) = &normals {
+        let transformed = normals
+            .iter()
+            .map(|normal| transform_normal(world, *normal))
+            .collect::<Vec<_>>();
+        streams.push(AttributeStream {
             name: "NORMAL".to_string(),
             components: 3,
-            offset,
+            data: pack_f32_stream(&transformed),
         });
-        stride += 3 * size_of::<f32>();
-        offset
-    });
+    }
 
-    let tex_coord_offset = tex_coords.as_ref().map(|_| {
-        let offset = stride;
-        attributes.push(VertexAttribute {
+    if let Some(tex_coords) = &tex_coords {
+        streams.push(AttributeStream {
             name: "TEXCOORD_0".to_string(),
             components: 2,
-            offset,
+            data: pack_f32_stream(tex_coords),
         });
-        stride += 2 * size_of::<f32>();
-        offset
-    });
+    }
 
-    let tangent_offset = tangents.as_ref().map(|_| {
-        let offset = stride;
-        attributes.push(VertexAttribute {
+    if let Some(tangents) = &tangents {
+        let transformed = tangents
+            .iter()
+            .map(|tangent| transform_tangent(world, *tangent))
+            .collect::<Vec<_>>();
+        streams.push(AttributeStream {
             name: "TANGENT".to_string(),
             components: 4,
-            offset,
+            data: pack_f32_stream(&transformed),
         });
-        stride += 4 * size_of::<f32>();
-        offset
-    });
+    }
 
-    let color_offset = colors.as_ref().map(|_| {
-        let offset = stride;
-        attributes.push(VertexAttribute {
+    if let Some(colors) = &colors {
+        streams.push(AttributeStream {
             name: "COLOR_0".to_string(),
             components: 4,
-            offset,
+            data: pack_f32_stream(colors),
         });
-        stride += 4 * size_of::<f32>();
-        offset
-    });
-
-    let mut vertices = vec![0u8; vertex_count * stride];
-    for index in 0..vertex_count {
-        let base = index * stride;
-        let position = transform_position(world, positions[index]);
-        write_f32s(&mut vertices, base, &position);
-
-        if let (Some(offset), Some(normals)) = (normal_offset, normals.as_ref()) {
-            let normal = transform_normal(world, normals[index]);
-            write_f32s(&mut vertices, base + offset, &normal);
-        }
-
-        if let (Some(offset), Some(tex_coords)) = (tex_coord_offset, tex_coords.as_ref()) {
-            write_f32s(&mut vertices, base + offset, &tex_coords[index]);
-        }
-
-        if let (Some(offset), Some(tangents)) = (tangent_offset, tangents.as_ref()) {
-            let tangent = transform_tangent(world, tangents[index]);
-            write_f32s(&mut vertices, base + offset, &tangent);
-        }
-
-        if let (Some(offset), Some(colors)) = (color_offset, colors.as_ref()) {
-            write_f32s(&mut vertices, base + offset, &colors[index]);
-        }
     }
 
     Ok(PackedPrimitive {
         name: format!("{mesh_name}[{}]", primitive.index()),
-        vertices,
         vertex_count,
-        stride,
-        attributes,
+        streams,
         indices,
     })
+}
+
+fn pack_f32_stream<const N: usize>(values: &[[f32; N]]) -> Vec<u8> {
+    let mut data = Vec::with_capacity(values.len() * N * size_of::<f32>());
+    for value in values {
+        for component in value {
+            data.extend_from_slice(&component.to_ne_bytes());
+        }
+    }
+    data
 }
 
 fn triangle_list(mode: Mode, indices: &[u32]) -> Result<Vec<u32>> {
@@ -247,13 +259,6 @@ fn triangle_list(mode: Mode, indices: &[u32]) -> Result<Vec<u32>> {
             Ok(triangles)
         }
         other => bail!("unsupported primitive mode {other:?}"),
-    }
-}
-
-fn write_f32s(bytes: &mut [u8], offset: usize, values: &[f32]) {
-    for (index, value) in values.iter().enumerate() {
-        let start = offset + index * size_of::<f32>();
-        bytes[start..start + size_of::<f32>()].copy_from_slice(&value.to_ne_bytes());
     }
 }
 
