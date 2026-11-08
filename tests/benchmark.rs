@@ -11,6 +11,8 @@ fn benchmark_box_gltf() {
             cone_weight: 0.0,
         },
         cache_config: CacheConfig::default(),
+        wave_size: 32,
+        max_in_flight: 64,
     };
 
     let report = run(&input, &options).expect("benchmark should succeed");
@@ -48,6 +50,13 @@ fn benchmark_box_gltf() {
     assert!(report.standard.memory.breakdown.attribute_data.dram_bytes > 0);
     assert!(report.localized.memory.breakdown.position_data.dram_bytes > 0);
     assert!(report.localized.memory.breakdown.attribute_data.dram_bytes > 0);
+
+    assert!(report.standard.memory.memory_requests > 0);
+    assert!(report.localized.memory.memory_requests > 0);
+    assert!(report.standard.memory.phase_chunks > 0);
+    assert!(report.localized.memory.phase_chunks > 0);
+    assert!(report.standard.memory.estimated_latency_cycles > 0);
+    assert!(report.localized.memory.estimated_latency_cycles > 0);
 
     assert_eq!(
         report.standard.storage.position_bytes + report.standard.storage.attribute_bytes,

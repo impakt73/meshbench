@@ -60,6 +60,7 @@ pub struct PrimitiveClusters {
     pub standard: Meshlets,
     pub localized: LocalizedStreams,
     pub referenced_vertex_count: usize,
+    pub max_vertices: usize,
 }
 
 pub fn prepare_primitive(primitive: &PackedPrimitive) -> PreparedPrimitive {
@@ -162,6 +163,7 @@ pub fn build_clusters(
             attributes: localized_attributes,
         },
         referenced_vertex_count: referenced.len(),
+        max_vertices: config.max_vertices,
     })
 }
 

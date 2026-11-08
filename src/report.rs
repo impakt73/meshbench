@@ -56,7 +56,10 @@ pub struct MemoryMetrics {
     pub dram_lines: u64,
     pub dram_bytes: u64,
     pub line_amplification: f64,
+    pub memory_requests: u64,
+    pub phase_chunks: u64,
     pub estimated_latency_cycles: u64,
+    pub dram_bytes_per_cycle: f64,
     pub logical_bytes_per_triangle: f64,
     pub dram_bytes_per_triangle: f64,
     pub logical_bytes_per_cluster: f64,
@@ -71,6 +74,7 @@ impl MemoryMetrics {
         self.l1_hit_rate = ratio(self.l1_hits, self.l1_line_requests);
         self.l2_hit_rate = ratio(self.l2_hits, self.l2_line_requests);
         self.line_amplification = ratio(self.dram_bytes, self.logical_bytes);
+        self.dram_bytes_per_cycle = ratio(self.dram_bytes, self.estimated_latency_cycles);
     }
 
     pub fn set_workload(&mut self, triangles: u64, clusters: u64) {
@@ -145,6 +149,8 @@ pub struct BenchmarkReport {
     pub input: String,
     pub cluster_config: ClusterConfig,
     pub cache_config: CacheConfig,
+    pub wave_size: usize,
+    pub max_in_flight: usize,
     pub primitive_count: usize,
     pub total_vertices: u64,
     pub total_triangles: u64,
@@ -179,11 +185,17 @@ impl BenchmarkReport {
             self.cache_config.l2_latency,
             self.cache_config.dram_latency
         );
-        println!("model: sequential cluster traversal, cold caches, per-line latency estimate");
+        println!(
+            "execution: wave_size={} max_in_flight={}",
+            self.wave_size, self.max_in_flight
+        );
+        println!(
+            "model: wave/SIMD trace, dependency-phase latency, coalesced independent requests"
+        );
         println!();
 
         println!(
-            "{:<10} {:>12} {:>12} {:>9} {:>9} {:>12} {:>12} {:>7} {:>12}",
+            "{:<10} {:>12} {:>12} {:>9} {:>9} {:>12} {:>12} {:>7} {:>10} {:>12}",
             "path",
             "storage B",
             "logical B",
@@ -192,10 +204,19 @@ impl BenchmarkReport {
             "DRAM B",
             "DRAM lines",
             "amp",
+            "requests",
             "cycles"
         );
         self.print_path_row(&self.standard);
         self.print_path_row(&self.localized);
+        println!(
+            "phase chunks: standard={} localized={}",
+            self.standard.memory.phase_chunks, self.localized.memory.phase_chunks
+        );
+        println!(
+            "effective DRAM bandwidth: standard={:.2} B/cycle localized={:.2} B/cycle",
+            self.standard.memory.dram_bytes_per_cycle, self.localized.memory.dram_bytes_per_cycle
+        );
         println!(
             "amp = DRAM bytes / shader-requested bytes; below 1.0 means requests coalesce into shared cache lines"
         );
@@ -281,7 +302,7 @@ impl BenchmarkReport {
 
     fn print_path_row(&self, path: &PathReport) {
         println!(
-            "{:<10} {:>12} {:>12} {:>8.2}% {:>8.2}% {:>12} {:>12} {:>7.2} {:>12}",
+            "{:<10} {:>12} {:>12} {:>8.2}% {:>8.2}% {:>12} {:>12} {:>7.2} {:>10} {:>12}",
             path.path,
             path.storage.total_bytes,
             path.memory.logical_bytes,
@@ -290,6 +311,7 @@ impl BenchmarkReport {
             path.memory.dram_bytes,
             path.memory.dram_lines,
             path.memory.line_amplification,
+            path.memory.memory_requests,
             path.memory.estimated_latency_cycles
         );
     }

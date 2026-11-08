@@ -36,14 +36,28 @@ struct Cli {
     #[arg(long, default_value_t = 8)]
     l2_ways: usize,
 
-    #[arg(long, default_value_t = 4)]
+    #[arg(long, default_value_t = 32)]
     l1_latency: u32,
 
-    #[arg(long, default_value_t = 14)]
+    #[arg(long, default_value_t = 200)]
     l2_latency: u32,
 
-    #[arg(long, default_value_t = 220)]
+    #[arg(long, default_value_t = 600)]
     dram_latency: u32,
+
+    #[arg(
+        long,
+        default_value_t = 32,
+        help = "Lanes per SIMD wave used for clustered vertex processing"
+    )]
+    wave_size: usize,
+
+    #[arg(
+        long,
+        default_value_t = 64,
+        help = "Maximum independent wave requests in flight per execution phase"
+    )]
+    max_in_flight: usize,
 
     #[arg(long)]
     json: bool,
@@ -71,6 +85,8 @@ fn main() -> Result<()> {
             l2_latency: cli.l2_latency,
             dram_latency: cli.dram_latency,
         },
+        wave_size: cli.wave_size,
+        max_in_flight: cli.max_in_flight,
     };
 
     let report = run(&cli.input, &options)?;

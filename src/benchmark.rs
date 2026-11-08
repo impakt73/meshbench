@@ -11,11 +11,19 @@ use std::path::Path;
 pub struct BenchmarkOptions {
     pub cluster_config: ClusterConfig,
     pub cache_config: CacheConfig,
+    pub wave_size: usize,
+    pub max_in_flight: usize,
 }
 
 pub fn run(input: &Path, options: &BenchmarkOptions) -> Result<BenchmarkReport> {
     options.cluster_config.validate()?;
     options.cache_config.validate()?;
+    if options.wave_size == 0 {
+        bail!("wave_size must be greater than zero");
+    }
+    if options.max_in_flight == 0 {
+        bail!("max_in_flight must be greater than zero");
+    }
 
     let loaded = load_gltf(input)?;
     let mut warnings = loaded.warnings;
@@ -92,8 +100,20 @@ pub fn run(input: &Path, options: &BenchmarkOptions) -> Result<BenchmarkReport> 
         .map(|cluster| cluster.standard.len() as u64)
         .sum();
 
-    let mut standard_memory = simulate_standard(&primitives, &clusters, options.cache_config);
-    let mut localized_memory = simulate_localized(&primitives, &clusters, options.cache_config);
+    let mut standard_memory = simulate_standard(
+        &primitives,
+        &clusters,
+        options.cache_config,
+        options.wave_size,
+        options.max_in_flight,
+    );
+    let mut localized_memory = simulate_localized(
+        &primitives,
+        &clusters,
+        options.cache_config,
+        options.wave_size,
+        options.max_in_flight,
+    );
     standard_memory.set_workload(total_triangles, total_clusters);
     localized_memory.set_workload(total_triangles, total_clusters);
 
@@ -101,6 +121,8 @@ pub fn run(input: &Path, options: &BenchmarkOptions) -> Result<BenchmarkReport> 
         input: input.display().to_string(),
         cluster_config: options.cluster_config,
         cache_config: options.cache_config,
+        wave_size: options.wave_size,
+        max_in_flight: options.max_in_flight,
         primitive_count: primitives.len(),
         total_vertices,
         total_triangles,
@@ -123,6 +145,7 @@ pub fn run(input: &Path, options: &BenchmarkOptions) -> Result<BenchmarkReport> 
 fn storage_standard(primitive: &PreparedPrimitive, cluster: &PrimitiveClusters) -> StorageMetrics {
     let descriptor_size = size_of::<meshopt::ffi::meshopt_Meshlet>() as u64;
     let cluster_count = cluster.standard.len() as u64;
+    let max_vertices = cluster.max_vertices as u64;
     let position_bytes = primitive.vertex_count as u64 * primitive.position().element_size() as u64;
     let attribute_bytes = primitive
         .streams
@@ -135,7 +158,7 @@ fn storage_standard(primitive: &PreparedPrimitive, cluster: &PrimitiveClusters) 
         vertex_count: primitive.vertex_count as u64,
         triangle_count: primitive.triangle_count() as u64,
         descriptor_bytes: cluster_count * descriptor_size,
-        vertex_indirection_bytes: cluster.standard.vertices.len() as u64 * size_of::<u32>() as u64,
+        vertex_indirection_bytes: cluster_count * max_vertices * size_of::<u32>() as u64,
         position_bytes,
         attribute_bytes,
         vertex_data_bytes: position_bytes + attribute_bytes,
@@ -149,19 +172,22 @@ fn storage_standard(primitive: &PreparedPrimitive, cluster: &PrimitiveClusters) 
 fn storage_localized(primitive: &PreparedPrimitive, cluster: &PrimitiveClusters) -> StorageMetrics {
     let descriptor_size = size_of::<meshopt::ffi::meshopt_Meshlet>() as u64;
     let cluster_count = cluster.localized.len() as u64;
-    let position_bytes = cluster.localized.positions.vertices.len() as u64;
-    let attribute_bytes = cluster
-        .localized
-        .attributes
-        .iter()
-        .map(|stream| stream.data.len() as u64)
-        .sum::<u64>();
-    let vertex_data_bytes = position_bytes + attribute_bytes;
+    let max_vertices = cluster.max_vertices as u64;
     let element_size = primitive
         .streams
         .iter()
         .map(|stream| stream.element_size() as u64)
         .sum::<u64>();
+    let position_bytes = cluster_count * max_vertices * primitive.position().element_size() as u64;
+    let attribute_bytes = cluster_count
+        * max_vertices
+        * primitive
+            .streams
+            .iter()
+            .skip(1)
+            .map(|stream| stream.element_size() as u64)
+            .sum::<u64>();
+    let vertex_data_bytes = position_bytes + attribute_bytes;
     let referenced_vertex_bytes = cluster.referenced_vertex_count as u64 * element_size;
     let mut storage = StorageMetrics {
         cluster_count,
