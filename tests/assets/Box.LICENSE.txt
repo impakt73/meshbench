@@ -1,0 +1,5 @@
+Box.glb
+Source: https://github.com/KhronosGroup/glTF-Sample-Assets/tree/main/Models/Box
+Copyright 2017 Cesium.
+Licensed under the Creative Commons Attribution 4.0 International license:
+https://creativecommons.org/licenses/by/4.0/legalcode
