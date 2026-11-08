@@ -12,7 +12,10 @@ pub struct BenchmarkOptions {
     pub cluster_config: ClusterConfig,
     pub cache_config: CacheConfig,
     pub wave_size: usize,
-    pub max_in_flight: usize,
+    pub cu_count: usize,
+    pub waves_per_cu: usize,
+    pub dram_bandwidth_gbps: f64,
+    pub gpu_clock_ghz: f64,
 }
 
 pub fn run(input: &Path, options: &BenchmarkOptions) -> Result<BenchmarkReport> {
@@ -21,8 +24,17 @@ pub fn run(input: &Path, options: &BenchmarkOptions) -> Result<BenchmarkReport> 
     if options.wave_size == 0 {
         bail!("wave_size must be greater than zero");
     }
-    if options.max_in_flight == 0 {
-        bail!("max_in_flight must be greater than zero");
+    if options.cu_count == 0 {
+        bail!("cu_count must be greater than zero");
+    }
+    if options.waves_per_cu == 0 {
+        bail!("waves_per_cu must be greater than zero");
+    }
+    if options.dram_bandwidth_gbps < 0.0 {
+        bail!("dram_bandwidth_gbps must not be negative");
+    }
+    if options.gpu_clock_ghz <= 0.0 {
+        bail!("gpu_clock_ghz must be greater than zero");
     }
 
     let loaded = load_gltf(input)?;
@@ -100,19 +112,25 @@ pub fn run(input: &Path, options: &BenchmarkOptions) -> Result<BenchmarkReport> 
         .map(|cluster| cluster.standard.len() as u64)
         .sum();
 
+    let bandwidth_bytes_per_cycle = options.dram_bandwidth_gbps / options.gpu_clock_ghz;
+
     let mut standard_memory = simulate_standard(
         &primitives,
         &clusters,
         options.cache_config,
         options.wave_size,
-        options.max_in_flight,
+        options.cu_count,
+        options.waves_per_cu,
+        bandwidth_bytes_per_cycle,
     );
     let mut localized_memory = simulate_localized(
         &primitives,
         &clusters,
         options.cache_config,
         options.wave_size,
-        options.max_in_flight,
+        options.cu_count,
+        options.waves_per_cu,
+        bandwidth_bytes_per_cycle,
     );
     standard_memory.set_workload(total_triangles, total_clusters);
     localized_memory.set_workload(total_triangles, total_clusters);
@@ -122,7 +140,10 @@ pub fn run(input: &Path, options: &BenchmarkOptions) -> Result<BenchmarkReport> 
         cluster_config: options.cluster_config,
         cache_config: options.cache_config,
         wave_size: options.wave_size,
-        max_in_flight: options.max_in_flight,
+        cu_count: options.cu_count,
+        waves_per_cu: options.waves_per_cu,
+        dram_bandwidth_gbps: options.dram_bandwidth_gbps,
+        gpu_clock_ghz: options.gpu_clock_ghz,
         primitive_count: primitives.len(),
         total_vertices,
         total_triangles,

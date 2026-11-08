@@ -15,8 +15,8 @@ pub enum LoadCategory {
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct LoadCategoryMetrics {
     pub logical_bytes: u64,
-    pub line_requests: u64,
-    pub dram_lines: u64,
+    pub sector_requests: u64,
+    pub dram_sectors: u64,
     pub dram_bytes: u64,
 }
 
@@ -44,21 +44,25 @@ impl LoadBreakdown {
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct MemoryMetrics {
     pub logical_bytes: u64,
-    pub l1_line_requests: u64,
+    pub l1_sector_requests: u64,
     pub l1_hits: u64,
     pub l1_misses: u64,
     pub l1_hit_rate: f64,
-    pub l2_line_requests: u64,
+    pub l2_sector_requests: u64,
     pub l2_hits: u64,
     pub l2_misses: u64,
     pub l2_hit_rate: f64,
     pub unique_lines: u64,
+    pub unique_sectors: u64,
+    pub dram_sectors: u64,
     pub dram_lines: u64,
     pub dram_bytes: u64,
     pub line_amplification: f64,
     pub memory_requests: u64,
-    pub phase_chunks: u64,
+    pub waves: u64,
+    pub wave_groups: u64,
     pub estimated_latency_cycles: u64,
+    pub bandwidth_latency_cycles: u64,
     pub dram_bytes_per_cycle: f64,
     pub logical_bytes_per_triangle: f64,
     pub dram_bytes_per_triangle: f64,
@@ -69,10 +73,10 @@ pub struct MemoryMetrics {
 
 impl MemoryMetrics {
     pub fn finalize(&mut self) {
-        self.l1_misses = self.l1_line_requests.saturating_sub(self.l1_hits);
-        self.l2_misses = self.l2_line_requests.saturating_sub(self.l2_hits);
-        self.l1_hit_rate = ratio(self.l1_hits, self.l1_line_requests);
-        self.l2_hit_rate = ratio(self.l2_hits, self.l2_line_requests);
+        self.l1_misses = self.l1_sector_requests.saturating_sub(self.l1_hits);
+        self.l2_misses = self.l2_sector_requests.saturating_sub(self.l2_hits);
+        self.l1_hit_rate = ratio(self.l1_hits, self.l1_sector_requests);
+        self.l2_hit_rate = ratio(self.l2_hits, self.l2_sector_requests);
         self.line_amplification = ratio(self.dram_bytes, self.logical_bytes);
         self.dram_bytes_per_cycle = ratio(self.dram_bytes, self.estimated_latency_cycles);
     }
@@ -150,7 +154,10 @@ pub struct BenchmarkReport {
     pub cluster_config: ClusterConfig,
     pub cache_config: CacheConfig,
     pub wave_size: usize,
-    pub max_in_flight: usize,
+    pub cu_count: usize,
+    pub waves_per_cu: usize,
+    pub dram_bandwidth_gbps: f64,
+    pub gpu_clock_ghz: f64,
     pub primitive_count: usize,
     pub total_vertices: u64,
     pub total_triangles: u64,
@@ -175,8 +182,9 @@ impl BenchmarkReport {
             self.cluster_config.cone_weight
         );
         println!(
-            "cache: line={}B L1={}B/{}way L2={}B/{}way latency L1={} L2={} DRAM={}",
+            "cache: line={}B sector={}B L1={}B/CU/{}way L2={}B/{}way latency L1={} L2={} DRAM={}",
             self.cache_config.line_size,
+            self.cache_config.sector_size,
             self.cache_config.l1_size,
             self.cache_config.l1_ways,
             self.cache_config.l2_size,
@@ -186,11 +194,16 @@ impl BenchmarkReport {
             self.cache_config.dram_latency
         );
         println!(
-            "execution: wave_size={} max_in_flight={}",
-            self.wave_size, self.max_in_flight
+            "execution: CUs={} waves/CU={} total_waves={} wave_size={} DRAM={}GB/s clock={}GHz",
+            self.cu_count,
+            self.waves_per_cu,
+            self.cu_count * self.waves_per_cu,
+            self.wave_size,
+            self.dram_bandwidth_gbps,
+            self.gpu_clock_ghz
         );
         println!(
-            "model: wave/SIMD trace, dependency-phase latency, coalesced independent requests"
+            "model: per-wave SIMD trace, dependency phases within each wave, independent waves in flight"
         );
         println!();
 
@@ -202,7 +215,7 @@ impl BenchmarkReport {
             "L1 hit%",
             "L2 hit%",
             "DRAM B",
-            "DRAM lines",
+            "DRAM sectors",
             "amp",
             "requests",
             "cycles"
@@ -210,8 +223,17 @@ impl BenchmarkReport {
         self.print_path_row(&self.standard);
         self.print_path_row(&self.localized);
         println!(
-            "phase chunks: standard={} localized={}",
-            self.standard.memory.phase_chunks, self.localized.memory.phase_chunks
+            "waves: standard={} localized={}",
+            self.standard.memory.waves, self.localized.memory.waves
+        );
+        println!(
+            "wave groups: standard={} localized={}",
+            self.standard.memory.wave_groups, self.localized.memory.wave_groups
+        );
+        println!(
+            "bandwidth floor cycles: standard={} localized={}",
+            self.standard.memory.bandwidth_latency_cycles,
+            self.localized.memory.bandwidth_latency_cycles
         );
         println!(
             "effective DRAM bandwidth: standard={:.2} B/cycle localized={:.2} B/cycle",
@@ -309,7 +331,7 @@ impl BenchmarkReport {
             path.memory.l1_hit_rate * 100.0,
             path.memory.l2_hit_rate * 100.0,
             path.memory.dram_bytes,
-            path.memory.dram_lines,
+            path.memory.dram_sectors,
             path.memory.line_amplification,
             path.memory.memory_requests,
             path.memory.estimated_latency_cycles

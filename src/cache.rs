@@ -4,6 +4,7 @@ use serde::Serialize;
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct CacheConfig {
     pub line_size: usize,
+    pub sector_size: usize,
     pub l1_size: usize,
     pub l1_ways: usize,
     pub l2_size: usize,
@@ -16,10 +17,11 @@ pub struct CacheConfig {
 impl Default for CacheConfig {
     fn default() -> Self {
         Self {
-            line_size: 64,
-            l1_size: 32 * 1024,
+            line_size: 128,
+            sector_size: 32,
+            l1_size: 128 * 1024,
             l1_ways: 4,
-            l2_size: 512 * 1024,
+            l2_size: 5 * 1024 * 1024,
             l2_ways: 8,
             l1_latency: 32,
             l2_latency: 200,
@@ -32,6 +34,12 @@ impl CacheConfig {
     pub fn validate(&self) -> Result<()> {
         if self.line_size == 0 || !self.line_size.is_power_of_two() {
             bail!("cache line size must be a non-zero power of two");
+        }
+        if self.sector_size == 0 || !self.sector_size.is_power_of_two() {
+            bail!("cache sector size must be a non-zero power of two");
+        }
+        if self.sector_size > self.line_size || !self.line_size.is_multiple_of(self.sector_size) {
+            bail!("cache sector size must divide the cache line size");
         }
         if self.l1_ways == 0 || self.l2_ways == 0 {
             bail!("cache associativity must be greater than zero");
@@ -53,38 +61,45 @@ impl CacheConfig {
 struct CacheLine {
     tag: u64,
     age: u64,
+    sectors: u64,
 }
 
 pub struct Cache {
-    line_size: u64,
     sets: u64,
+    sectors_per_line: u64,
     clock: u64,
     data: Vec<Vec<Option<CacheLine>>>,
 }
 
 impl Cache {
-    pub fn new(size_bytes: usize, ways: usize, line_size: usize) -> Self {
+    pub fn new(size_bytes: usize, ways: usize, line_size: usize, sector_size: usize) -> Self {
         let line_size = line_size as u64;
+        let sector_size = sector_size as u64;
+        let sectors_per_line = line_size / sector_size;
         let sets = ((size_bytes as u64) / (line_size * ways as u64)).max(1);
         Self {
-            line_size,
             sets,
+            sectors_per_line,
             clock: 0,
             data: vec![vec![None; ways]; sets as usize],
         }
     }
 
-    pub fn probe_and_fill(&mut self, line: u64) -> bool {
+    pub fn access_sector(&mut self, sector: u64) -> bool {
+        let line = sector / self.sectors_per_line;
+        let sector_bit = 1u64 << (sector % self.sectors_per_line);
         let set_index = (line % self.sets) as usize;
         let tag = line / self.sets;
-        let set = &mut self.data[set_index];
         self.clock += 1;
         let age = self.clock;
+        let set = &mut self.data[set_index];
 
         for cached in set.iter_mut().flatten() {
             if cached.tag == tag {
+                let hit = cached.sectors & sector_bit != 0;
+                cached.sectors |= sector_bit;
                 cached.age = age;
-                return true;
+                return hit;
             }
         }
 
@@ -95,12 +110,12 @@ impl Cache {
             .map(|(index, _)| index)
             .unwrap_or(0);
 
-        set[victim] = Some(CacheLine { tag, age });
+        set[victim] = Some(CacheLine {
+            tag,
+            age,
+            sectors: sector_bit,
+        });
         false
-    }
-
-    pub fn line_size(&self) -> u64 {
-        self.line_size
     }
 }
 
@@ -134,29 +149,38 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cache_line_is_hit_after_fill() {
-        let mut cache = Cache::new(1024, 2, 64);
-        assert!(!cache.probe_and_fill(10));
-        assert!(cache.probe_and_fill(10));
+    fn cache_sector_is_hit_after_fill() {
+        let mut cache = Cache::new(4096, 2, 128, 32);
+        assert!(!cache.access_sector(10));
+        assert!(cache.access_sector(10));
+    }
+
+    #[test]
+    fn cache_line_sectors_fill_independently() {
+        let mut cache = Cache::new(4096, 2, 128, 32);
+        assert!(!cache.access_sector(0));
+        assert!(!cache.access_sector(1));
+        assert!(cache.access_sector(0));
+        assert!(cache.access_sector(1));
     }
 
     #[test]
     fn cache_evicts_least_recently_used_line() {
-        let mut cache = Cache::new(128, 2, 64);
-        assert!(!cache.probe_and_fill(0));
-        assert!(!cache.probe_and_fill(1));
-        assert!(cache.probe_and_fill(0));
-        assert!(!cache.probe_and_fill(2));
-        assert!(!cache.probe_and_fill(1));
+        let mut cache = Cache::new(256, 2, 128, 32);
+        assert!(!cache.access_sector(0));
+        assert!(!cache.access_sector(4));
+        assert!(cache.access_sector(0));
+        assert!(!cache.access_sector(8));
+        assert!(!cache.access_sector(4));
     }
 
     #[test]
     fn allocator_returns_line_aligned_addresses() {
-        let mut allocator = BufferAllocator::new(64);
+        let mut allocator = BufferAllocator::new(128);
         let first = allocator.alloc(3);
-        let second = allocator.alloc(65);
-        assert_eq!(first % 64, 0);
-        assert_eq!(second % 64, 0);
+        let second = allocator.alloc(129);
+        assert_eq!(first % 128, 0);
+        assert_eq!(second % 128, 0);
         assert!(second > first);
     }
 }

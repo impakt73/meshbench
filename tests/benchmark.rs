@@ -12,7 +12,10 @@ fn benchmark_box_gltf() {
         },
         cache_config: CacheConfig::default(),
         wave_size: 32,
-        max_in_flight: 64,
+        cu_count: 52,
+        waves_per_cu: 40,
+        dram_bandwidth_gbps: 560.0,
+        gpu_clock_ghz: 1.825,
     };
 
     let report = run(&input, &options).expect("benchmark should succeed");
@@ -53,10 +56,16 @@ fn benchmark_box_gltf() {
 
     assert!(report.standard.memory.memory_requests > 0);
     assert!(report.localized.memory.memory_requests > 0);
-    assert!(report.standard.memory.phase_chunks > 0);
-    assert!(report.localized.memory.phase_chunks > 0);
+    assert!(report.standard.memory.waves > 0);
+    assert!(report.localized.memory.waves > 0);
+    assert!(report.standard.memory.wave_groups > 0);
+    assert!(report.localized.memory.wave_groups > 0);
     assert!(report.standard.memory.estimated_latency_cycles > 0);
     assert!(report.localized.memory.estimated_latency_cycles > 0);
+    assert!(report.standard.memory.dram_sectors > 0);
+    assert!(report.localized.memory.dram_sectors > 0);
+    assert!(report.standard.memory.unique_sectors > 0);
+    assert!(report.localized.memory.unique_sectors > 0);
 
     assert_eq!(
         report.standard.storage.position_bytes + report.standard.storage.attribute_bytes,
