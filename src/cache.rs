@@ -23,9 +23,9 @@ impl Default for CacheConfig {
             l1_ways: 4,
             l2_size: 5 * 1024 * 1024,
             l2_ways: 8,
-            l1_latency: 32,
-            l2_latency: 200,
-            dram_latency: 600,
+            l1_latency: 300,
+            l2_latency: 500,
+            dram_latency: 1000,
         }
     }
 }

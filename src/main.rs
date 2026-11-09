@@ -39,13 +39,13 @@ struct Cli {
     #[arg(long, default_value_t = 8)]
     l2_ways: usize,
 
-    #[arg(long, default_value_t = 32)]
+    #[arg(long, default_value_t = 300)]
     l1_latency: u32,
 
-    #[arg(long, default_value_t = 200)]
+    #[arg(long, default_value_t = 500)]
     l2_latency: u32,
 
-    #[arg(long, default_value_t = 600)]
+    #[arg(long, default_value_t = 1000)]
     dram_latency: u32,
 
     #[arg(
