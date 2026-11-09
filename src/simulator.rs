@@ -179,11 +179,11 @@ pub fn simulate_localized(
         let cluster_count = localized.len();
         let position_size = primitive.position().element_size() as u64;
         let descriptor_base = allocator.alloc(cluster_count * descriptor_size as usize);
-        let position_base = allocator.alloc(cluster_count * max_vertices * position_size as usize);
+        let position_base = allocator.alloc(localized.positions.vertices.len());
         let attribute_bases = localized
             .attributes
             .iter()
-            .map(|stream| allocator.alloc(cluster_count * max_vertices * stream.element_size()))
+            .map(|stream| allocator.alloc(stream.data.len()))
             .collect::<Vec<_>>();
         let triangle_base = allocator.alloc(localized.positions.triangles.len());
 
@@ -191,8 +191,6 @@ pub fn simulate_localized(
             let mut cluster_waves = Vec::new();
             let vertex_offset = meshlet.vertex_offset as usize;
             let actual_vertices = meshlet.vertex_count as usize;
-            let cluster_position_base =
-                position_base + index as u64 * max_vertices as u64 * position_size;
             let wave_count = max_vertices.div_ceil(wave_size);
 
             for wave_index in 0..wave_count {
@@ -218,9 +216,8 @@ pub fn simulate_localized(
                 let mut addresses = Vec::with_capacity(lanes);
                 for slot in wave_start..wave_start + lanes {
                     let local_slot = clamped_slot(slot, actual_vertices);
-                    addresses.push(
-                        cluster_position_base + (vertex_offset + local_slot) as u64 * position_size,
-                    );
+                    addresses
+                        .push(position_base + (vertex_offset + local_slot) as u64 * position_size);
                 }
                 phase.push(Request::from_lanes(
                     &addresses,
@@ -231,14 +228,12 @@ pub fn simulate_localized(
 
                 for (stream_index, stream) in localized.attributes.iter().enumerate() {
                     let element_size = stream.element_size() as u64;
-                    let cluster_attribute_base = attribute_bases[stream_index]
-                        + index as u64 * max_vertices as u64 * element_size;
                     let mut addresses = Vec::with_capacity(lanes);
 
                     for slot in wave_start..wave_start + lanes {
                         let local_slot = clamped_slot(slot, actual_vertices);
                         addresses.push(
-                            cluster_attribute_base
+                            attribute_bases[stream_index]
                                 + (vertex_offset + local_slot) as u64 * element_size,
                         );
                     }
